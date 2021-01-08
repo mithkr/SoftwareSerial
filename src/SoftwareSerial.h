@@ -58,6 +58,7 @@ private:
   volatile uint8_t *_transmitPortRegister;
   volatile uint8_t *_pcint_maskreg;
   uint8_t _pcint_maskvalue;
+  int8_t _receiveInterrupt;
 
   // Expressed as 4-cycle delays (must never be 0!)
   uint16_t _rx_delay_centering;

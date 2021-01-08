@@ -288,6 +288,7 @@ void SoftwareSerial::setRX(uint8_t rx)
   _receiveBitMask = digitalPinToBitMask(rx);
   uint8_t port = digitalPinToPort(rx);
   _receivePortRegister = portInputRegister(port);
+  _receiveInterrupt = digitalPinToInterrupt(rx);
 }
 
 uint16_t SoftwareSerial::subtract_cap(uint16_t num, uint16_t sub) {
@@ -315,8 +316,8 @@ void SoftwareSerial::begin(long speed)
   // timings are the most critical (deviations stack 8 times)
   _tx_delay = subtract_cap(bit_delay, 15 / 4);
 
-  // Only setup rx when we have a valid PCINT for this pin
-  if (digitalPinToPCICR((int8_t)_receivePin)) {
+  // Only setup rx when we have a valid PCINT or INT for this pin
+  if (digitalPinToPCICR((int8_t)_receivePin) || _receiveInterrupt != NOT_AN_INTERRUPT) {
     #if GCC_VERSION > 40800
     // Timings counted from gcc 4.8.2 output. This works up to 115200 on
     // 16Mhz and 57600 on 8Mhz.
@@ -353,15 +354,16 @@ void SoftwareSerial::begin(long speed)
     _rx_delay_stopbit = subtract_cap(bit_delay * 3 / 4, (44 + 17) / 4);
     #endif
 
-
-    // Enable the PCINT for the entire port here, but never disable it
-    // (others might also need it, so we disable the interrupt by using
-    // the per-pin PCMSK register).
-    *digitalPinToPCICR((int8_t)_receivePin) |= _BV(digitalPinToPCICRbit(_receivePin));
-    // Precalculate the pcint mask register and value, so setRxIntMask
-    // can be used inside the ISR without costing too much time.
-    _pcint_maskreg = digitalPinToPCMSK(_receivePin);
-    _pcint_maskvalue = _BV(digitalPinToPCMSKbit(_receivePin));
+    if (digitalPinToPCICR((int8_t)_receivePin)) {
+      // Enable the PCINT for the entire port here, but never disable it
+      // (others might also need it, so we disable the interrupt by using
+      // the per-pin PCMSK register).
+      *digitalPinToPCICR((int8_t)_receivePin) |= _BV(digitalPinToPCICRbit(_receivePin));
+      // Precalculate the pcint mask register and value, so setRxIntMask
+      // can be used inside the ISR without costing too much time.
+      _pcint_maskreg = digitalPinToPCMSK(_receivePin);
+      _pcint_maskvalue = _BV(digitalPinToPCMSKbit(_receivePin));
+    }
 
     tunedDelay(_tx_delay); // if we were low this establishes the end
   }
@@ -377,9 +379,15 @@ void SoftwareSerial::begin(long speed)
 void SoftwareSerial::setRxIntMsk(bool enable)
 {
     if (enable)
-      *_pcint_maskreg |= _pcint_maskvalue;
+      if (_receiveInterrupt != NOT_AN_INTERRUPT)
+        attachInterrupt(_receiveInterrupt, SoftwareSerial::handle_interrupt, CHANGE);
+      else
+        *_pcint_maskreg |= _pcint_maskvalue;
     else
-      *_pcint_maskreg &= ~_pcint_maskvalue;
+      if (_receiveInterrupt != NOT_AN_INTERRUPT)
+        detachInterrupt(_receiveInterrupt);
+      else
+        *_pcint_maskreg &= ~_pcint_maskvalue;
 }
 
 void SoftwareSerial::end()
